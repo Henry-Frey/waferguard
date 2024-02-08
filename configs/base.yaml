@@ -1,0 +1,78 @@
+seed: 42
+project_name: waferguard
+
+data:
+  root: ./data
+  img_size: 96
+  num_workers: 0   # Windows: must be 0 (no fork; use spawn guards if you want workers)
+  pin_memory: true
+
+wm811k:
+  path: ${data.root}/wm811k
+  wafer_dim: 52
+  num_classes: 9
+  class_names:
+    - Center
+    - Donut
+    - Edge-Loc
+    - Edge-Ring
+    - Loc
+    - Near-Full
+    - Random
+    - Scratch
+    - None
+  train_ratio: 0.7
+  val_ratio: 0.15
+  test_ratio: 0.15
+  # preprocessing
+  noise_filter:
+    enabled: true
+    window_size: 3
+    min_neighbors: 3
+  balance_strategy: oversample  # oversample | undersample | focal_loss
+
+classifier:
+  backbone: resnet34
+  pretrained: true
+  batch_size: 256   # 3090 24GB: ResNet34 @ 96x96 fits ~512; 256 is safe with room
+  epochs: 50
+  optimizer:
+    name: adamw
+    lr: 3.0e-4
+    weight_decay: 1.0e-4
+  scheduler:
+    name: cosine
+    warmup_epochs: 3
+    min_lr: 1.0e-6
+  loss:
+    name: focal
+    alpha: 0.25
+    gamma: 2.0
+  early_stopping:
+    patience: 10
+    metric: f1_macro
+
+anomaly:
+  backbone: wide_resnet50_2
+  layers: [layer2, layer3]     # which backbone layers to extract from
+  img_size: 224
+  batch_size: 64    # 3090 24GB: wide_resnet50_2 @ 224x224 fits ~64-96
+  # PatchCore params
+  coreset_ratio: 0.01          # subsample ratio for memory bank
+  k_nearest: 9                 # neighbors for anomaly scoring
+  threshold_percentile: 95     # for binary anomaly decision
+  # evaluation
+  pixel_auroc: true
+  pro_integration_limit: 0.3
+
+tracking:
+  backend: mlflow
+  experiment: waferguard
+  log_every_n_steps: 50
+
+serving:
+  host: 0.0.0.0
+  port: 8000
+  model_path: ./artifacts/classifier_best.pt
+  anomaly_bank_path: ./artifacts/memory_bank.pt
+  mode: classifier  # classifier | anomaly | dual

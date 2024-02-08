@@ -1,0 +1,18 @@
+[project]
+name = "waferguard"
+version = "1.0.0"
+description = "Semiconductor wafer defect detection and anomaly localization"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+keywords = ["semiconductor", "wafer", "defect-detection", "anomaly-detection", "patchcore"]
+
+[tool.ruff]
+line-length = 99
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "SIM"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short --cov=src --cov-report=term-missing"
