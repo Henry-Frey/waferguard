@@ -1,0 +1,126 @@
+# WaferGuard SOTA configuration
+#
+# Target: macro F1 >= 0.915 on WM-811K (up from 0.888 baseline)
+#
+# Implements the full roadmap from base.yaml in priority order:
+#   Priority 1  — Class-Balanced Focal Loss (beta=0.9999, gamma=2.0) + label smoothing
+#   Priority 2  — Full 360° rotation (p=1.0) + CutMix + ElasticTransform
+#   Priority 3  — FPN neck on ResNet-50 (multi-scale features: P2–P5)
+#   Priority 4  — Radon transform + distance-from-center input channels (5ch total)
+#   Priority 5  — SAM optimizer with interval=10 (~10% overhead vs 2x for vanilla SAM)
+#   Priority 7  — 8-fold TTA at inference (enabled in serving only)
+#
+# Usage:
+#   python -m src.training.train_classifier --config=configs/sota.yaml
+#
+# Expected cumulative F1 after each priority group:
+#   P1+P2:       0.900–0.905
+#   +P3:         0.905–0.910
+#   +P4:         0.908–0.913
+#   +P5:         0.910–0.915
+
+seed: 42
+project_name: waferguard-sota
+
+data:
+  root: ./data
+  img_size: 128
+  num_workers: 2
+  pin_memory: true
+
+wm811k:
+  path: ${data.root}/wm811k
+  wafer_dim: 52
+  num_classes: 9
+  class_names:
+    - Center
+    - Donut
+    - Edge-Loc
+    - Edge-Ring
+    - Loc
+    - Near-Full
+    - Random
+    - Scratch
+    - None
+  train_ratio: 0.7
+  val_ratio: 0.15
+  test_ratio: 0.15
+  noise_filter:
+    enabled: true
+    window_size: 3
+    min_neighbors: 3
+  # 4× extra weight for Scratch (class 7) and Loc (class 4) — the two lowest-F1 classes
+  balance_strategy: class_specific_oversample
+
+# Priority 4: engineered input channels (Radon + distance-from-center → 5ch total)
+features:
+  use_radon: true                # Radon sinogram channel for Scratch orientation signal
+  use_distance_from_center: true # Distance-from-center channel for Loc/Edge-Loc discrimination
+  radon_angles: 36               # 36 angles @ 5° steps covers 0–180°
+
+classifier:
+  # Priority 3: FPN neck — multi-scale features from C2–C5 stages
+  backbone: resnet50_fpn
+  fpn_out_channels: 256          # 4 levels × 256ch = 1024 features before head
+  pretrained: true
+  batch_size: 128                # reduced from 256: FPN uses more memory; still fits 3090 24GB
+  epochs: 100
+
+  optimizer:
+    name: sam                    # Priority 5: Sharpness-Aware Minimization
+    lr: 3.0e-4
+    weight_decay: 1.0e-4
+    sam_rho: 0.05                # perturbation radius (paper default)
+    sam_adaptive: false          # true → ASAM (scale-invariant); slightly better with BN
+    sam_interval: 10             # SAM step every 10 iterations; ~10% vs 100% overhead
+
+  scheduler:
+    name: cosine
+    warmup_epochs: 3
+    min_lr: 1.0e-6
+
+  # Priority 1: Class-Balanced Focal Loss with label smoothing
+  loss:
+    name: cb_focal               # ClassBalancedFocalLoss
+    beta: 0.9999                 # effective number of samples parameter
+    gamma: 2.0                   # lower than focal=3.0: CB handles imbalance correction
+    smoothing: 0.1               # label smoothing epsilon
+
+  early_stopping:
+    patience: 20
+    metric: f1_macro
+
+# Priority 2: CutMix batch augmentation
+# (continuous 360° rotation is configured in transforms.py on this branch)
+cutmix:
+  enabled: true
+  alpha: 1.0                     # beta distribution parameter
+  prob: 0.5                      # apply CutMix to 50% of batches
+
+anomaly:
+  backbone: wide_resnet50_2
+  layers: [layer2, layer3]
+  img_size: 224
+  batch_size: 64
+  coreset_ratio: 0.01
+  k_nearest: 9
+  threshold_percentile: 95
+  pixel_auroc: true
+  pro_integration_limit: 0.3
+
+tracking:
+  backend: mlflow
+  experiment: waferguard-sota
+  log_every_n_steps: 50
+
+serving:
+  host: 0.0.0.0
+  port: 8000
+  model_path: ./artifacts/classifier_best.pt
+  anomaly_bank_path: ./artifacts/memory_bank.pt
+  mode: classifier
+  # Priority 7: TTA at inference — enable for production deployment
+  tta:
+    enabled: false               # set to true for +0.5-1.0% at 8× inference cost
+    n_augments: 8                # 8 = full 4-rotation × 2-flip; 4 = rotations only
+    selective_threshold: 0.9     # if enabled, skip TTA for high-confidence samples

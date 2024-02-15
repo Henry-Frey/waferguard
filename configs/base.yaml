@@ -3,8 +3,8 @@ project_name: waferguard
 
 data:
   root: ./data
-  img_size: 96
-  num_workers: 0   # Windows: must be 0 (no fork; use spawn guards if you want workers)
+  img_size: 128           # ↑ from 96: more spatial detail for Loc/Edge-Loc distinction
+  num_workers: 2          # ↑ from 0: parallel data loading — GPU was idle 86% of the time
   pin_memory: true
 
 wm811k:
@@ -29,13 +29,13 @@ wm811k:
     enabled: true
     window_size: 3
     min_neighbors: 3
-  balance_strategy: oversample  # oversample | undersample | focal_loss
+  balance_strategy: sqrt_oversample  # oversample | sqrt_oversample | focal_loss
 
 classifier:
-  backbone: resnet34
+  backbone: resnet50       # ↑ from resnet34: +25M params, ~+1-2pp macro F1
   pretrained: true
-  batch_size: 256   # 3090 24GB: ResNet34 @ 96x96 fits ~512; 256 is safe with room
-  epochs: 50
+  batch_size: 256          # 3090 24GB: ResNet50 @ 128x128 fp16 uses ~4GB, fits fine
+  epochs: 100
   optimizer:
     name: adamw
     lr: 3.0e-4
@@ -46,10 +46,10 @@ classifier:
     min_lr: 1.0e-6
   loss:
     name: focal
-    alpha: 0.25
-    gamma: 2.0
+    alpha: 0.25            # unused — sampler already balances batches
+    gamma: 3.0             # heavier focus on hard/rare examples
   early_stopping:
-    patience: 10
+    patience: 20
     metric: f1_macro
 
 anomaly:

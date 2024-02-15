@@ -21,8 +21,9 @@ htmlcov/
 .vscode/
 .idea/
 
-# Data & artifacts
+# Data & artifacts (the raw dataset dir, not source code)
 data/
+!src/data/
 artifacts/
 *.pt
 *.onnx
