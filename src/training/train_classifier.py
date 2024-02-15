@@ -70,7 +70,7 @@ class ClassifierTrainer:
 
         # Need train labels for CB-Focal loss construction
         self.train_labels = self.train_loader.dataset.labels
-        self.criterion = self._build_loss()
+        self.criterion = self._build_loss().to(self.device)
         self.optimizer = self._build_optimizer()
 
         sched_opt = (
