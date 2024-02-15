@@ -29,9 +29,6 @@ def build_classifier_transforms(
         Small elastic warps simulate die-placement variation and manufacturing
         tolerances without destroying the global defect geometry.
 
-    GaussNoise (p=0.2):
-        Simulates measurement noise and sensor variation in real fab equipment.
-
     Affine (p=0.3):
         Small translations/scales handle wafer centering imprecision.
 
@@ -61,7 +58,9 @@ def build_classifier_transforms(
                 sigma=5.0,
                 p=0.2,
             ),
-            A.GaussNoise(p=0.2),
+            # Note: GaussNoise omitted — albumentations' cv2 backend has a dtype
+            # mismatch on float32 multi-channel images in newer versions, and
+            # rotation + elastic deform + CutMix provide ample regularization.
             A.Resize(img_size, img_size),
             ToTensorV2(),
         ])
