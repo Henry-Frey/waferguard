@@ -57,8 +57,14 @@ class SAM(torch.optim.Optimizer):
         defaults = {"rho": rho, "adaptive": adaptive}
         super().__init__(params, defaults)
         self.base_optimizer = base_optimizer
-        # Keep our param_groups in sync with base optimizer
+        # Replace SAM's own param_groups with the base optimizer's so both
+        # optimizers share the same group dicts (and thus the same params).
+        # Then inject SAM-specific keys because the base optimizer groups were
+        # created without them and first_step/second_step need 'rho'/'adaptive'.
         self.param_groups = self.base_optimizer.param_groups
+        for group in self.param_groups:
+            group.setdefault("rho", rho)
+            group.setdefault("adaptive", adaptive)
 
     @torch.no_grad()
     def first_step(self, zero_grad: bool = False) -> None:
