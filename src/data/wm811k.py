@@ -104,7 +104,8 @@ def compute_distance_from_center(img_size: int) -> np.ndarray:
     xs = np.linspace(-1.0, 1.0, img_size, dtype=np.float32)
     xx, yy = np.meshgrid(xs, ys)
     # divide by sqrt(2) so the corner distance is exactly 1.0
-    return np.sqrt(xx ** 2 + yy ** 2) / np.sqrt(2.0)
+    # cast explicitly: dividing float32 by a Python float upcasts to float64
+    return (np.sqrt(xx ** 2 + yy ** 2) / np.sqrt(2.0)).astype(np.float32)
 
 
 def compute_radon_channel(
@@ -146,7 +147,8 @@ def compute_radon_channel(
     # Resize sinogram (H, n_angles) → (H, H) to match image spatial dimensions
     sino_pil = PIL_Image.fromarray((sinogram * 255).clip(0, 255).astype(np.uint8))
     sino_pil = sino_pil.resize((h, h), PIL_Image.BILINEAR)
-    return np.array(sino_pil, dtype=np.float32) / 255.0
+    # cast explicitly: dividing float32 by a Python float upcasts to float64
+    return (np.array(sino_pil, dtype=np.float32) / np.float32(255))
 
 
 # ---------------------------------------------------------------------------
