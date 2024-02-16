@@ -141,13 +141,22 @@ class ClassifierTrainer:
         return base_opt
 
     def _sam_update(self, images: torch.Tensor, labels: torch.Tensor) -> float:
-        """Full two-step SAM update with AMP support."""
+        """Full two-step SAM update with AMP support.
+
+        unscale_() can only be called once per optimizer per scaler.update()
+        cycle.  We skip it before first_step — the perturbation direction is
+        preserved with scaled gradients because grad and grad_norm both scale
+        by the same GradScaler factor, so it cancels in e_w = rho*grad/norm.
+        unscale_() is called only before second_step so the base optimizer
+        receives proper float32 gradients.
+        """
+        # --- pass 1: compute perturbation direction (scaled grads OK) ---
         with autocast("cuda"):
             loss = self.criterion(self.model(images), labels)
         self.scaler.scale(loss).backward()
-        self.scaler.unscale_(self.optimizer)
         self.optimizer.first_step(zero_grad=True)
 
+        # --- pass 2: descent step at perturbed weights ---
         with autocast("cuda"):
             loss2 = self.criterion(self.model(images), labels)
         self.scaler.scale(loss2).backward()
