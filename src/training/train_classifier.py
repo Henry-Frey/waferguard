@@ -6,6 +6,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
+import torch.nn as nn
 from torch.amp import GradScaler, autocast
 from omegaconf import DictConfig
 
@@ -67,6 +68,13 @@ class ClassifierTrainer:
         self.class_weights = class_weights.to(self.device)
 
         self.model = build_classifier(cfg).to(self.device)
+
+        # Optional DataParallel across multiple GPUs
+        train_cfg = cfg.get("training", {})
+        if train_cfg.get("data_parallel", False) and torch.cuda.device_count() > 1:
+            gpu_ids = list(train_cfg.get("gpu_ids", list(range(torch.cuda.device_count()))))
+            self.model = nn.DataParallel(self.model, device_ids=gpu_ids)
+            log.info("data_parallel_enabled", gpus=gpu_ids)
 
         # Need train labels for CB-Focal loss construction
         self.train_labels = self.train_loader.dataset.labels
