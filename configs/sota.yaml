@@ -22,6 +22,12 @@
 seed: 42
 project_name: waferguard-sota
 
+# Single-GPU training — locked to GPU 0. GPU 1 is visible but unused.
+# To switch to dual-GPU use configs/dual_gpu.yaml instead.
+training:
+  device: "cuda:0"
+  data_parallel: false
+
 data:
   root: ./data
   img_size: 128

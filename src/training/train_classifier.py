@@ -62,19 +62,29 @@ def cutmix_batch(
 class ClassifierTrainer:
     def __init__(self, cfg: DictConfig):
         self.cfg = cfg
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        # Resolve device from config; fall back to cuda:0 / cpu
+        train_cfg = cfg.get("training", {})
+        device_str = train_cfg.get("device", "cuda:0" if torch.cuda.is_available() else "cpu")
+        self.device = torch.device(device_str)
+        torch.cuda.set_device(self.device)   # pin default CUDA device for this process
+        log.info("device", device=str(self.device),
+                 gpu_name=torch.cuda.get_device_name(self.device) if self.device.type == "cuda" else "cpu",
+                 vram_gb=f"{torch.cuda.get_device_properties(self.device).total_memory/1024**3:.1f}"
+                 if self.device.type == "cuda" else "n/a")
 
         self.train_loader, self.val_loader, self.test_loader, class_weights = build_classifier_loaders(cfg)
         self.class_weights = class_weights.to(self.device)
 
         self.model = build_classifier(cfg).to(self.device)
 
-        # Optional DataParallel across multiple GPUs
-        train_cfg = cfg.get("training", {})
+        # Optional DataParallel across multiple GPUs (disabled in sota.yaml)
         if train_cfg.get("data_parallel", False) and torch.cuda.device_count() > 1:
             gpu_ids = list(train_cfg.get("gpu_ids", list(range(torch.cuda.device_count()))))
             self.model = nn.DataParallel(self.model, device_ids=gpu_ids)
             log.info("data_parallel_enabled", gpus=gpu_ids)
+        else:
+            log.info("single_gpu_mode", device=str(self.device))
 
         # Need train labels for CB-Focal loss construction
         self.train_labels = self.train_loader.dataset.labels
