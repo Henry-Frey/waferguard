@@ -3,7 +3,7 @@
 # Target: macro F1 >= 0.915 on WM-811K (up from 0.888 baseline)
 #
 # Implements the full roadmap from base.yaml in priority order:
-#   Priority 1  — Class-Balanced Focal Loss (beta=0.9999, gamma=2.0) + label smoothing
+#   Priority 1  — Focal Loss (gamma=3.0) + sqrt_oversample sampler (single imbalance mechanism)
 #   Priority 2  — Full 360° rotation (p=1.0) + CutMix + ElasticTransform
 #   Priority 3  — FPN neck on ResNet-50 (multi-scale features: P2–P5)
 #   Priority 4  — Radon transform + distance-from-center input channels (5ch total)
@@ -55,8 +55,7 @@ wm811k:
     enabled: true
     window_size: 3
     min_neighbors: 3
-  # 4× extra weight for Scratch (class 7) and Loc (class 4) — the two lowest-F1 classes
-  balance_strategy: class_specific_oversample
+  balance_strategy: sqrt_oversample
 
 # Priority 4: engineered input channels (Radon + distance-from-center → 5ch total)
 features:
@@ -85,12 +84,10 @@ classifier:
     warmup_epochs: 3
     min_lr: 1.0e-6
 
-  # Priority 1: Class-Balanced Focal Loss with label smoothing
+  # Priority 1: Focal Loss — sqrt_oversample sampler handles imbalance; one mechanism only
   loss:
-    name: cb_focal               # ClassBalancedFocalLoss
-    beta: 0.9999                 # effective number of samples parameter
-    gamma: 2.0                   # lower than focal=3.0: CB handles imbalance correction
-    smoothing: 0.1               # label smoothing epsilon
+    name: focal
+    gamma: 3.0
 
   early_stopping:
     patience: 20
