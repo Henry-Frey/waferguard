@@ -5,31 +5,53 @@ from __future__ import annotations
 from pathlib import Path
 
 import torch
-from torch.cuda.amp import GradScaler, autocast
 from omegaconf import DictConfig
 
 from src.data.loader import build_classifier_loaders
 from src.models.classifier import WaferClassifier
 from src.training.losses import FocalLoss, LabelSmoothingLoss
+from src.training.scheduler import WarmupCosineScheduler
 from src.evaluation.metrics import ClassificationMetrics
 from src.utils.config import parse_args_to_config
 from src.utils.logging import get_logger, setup_logging
 
 log = get_logger(__name__)
 
+# ── GPU throughput flags ──────────────────────────────────────────────────────
+# cuDNN auto-tunes the fastest convolution kernel for the fixed input shape.
+torch.backends.cudnn.benchmark = True
+# TF32 on Ampere+ GPUs: ~8× faster matmul with negligible accuracy loss.
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
+
+
+def _compile_model(model: torch.nn.Module) -> torch.nn.Module:
+    """Wrap model with torch.compile if available (PyTorch ≥ 2.0 + CUDA)."""
+    if torch.cuda.is_available() and hasattr(torch, "compile"):
+        try:
+            model = torch.compile(model)
+            log.info("torch_compile_enabled")
+        except Exception as exc:
+            log.info("torch_compile_skipped", reason=str(exc))
+    return model
+
 
 class ClassifierTrainer:
     def __init__(self, cfg: DictConfig):
         self.cfg = cfg
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        log.info("device", device=str(self.device))
 
         self.train_loader, self.val_loader, self.test_loader = build_classifier_loaders(cfg)
 
+        dropout = cfg.classifier.get("dropout", 0.3)
         self.model = WaferClassifier(
             backbone_name=cfg.classifier.backbone,
             num_classes=cfg.wm811k.num_classes,
             pretrained=cfg.classifier.pretrained,
+            dropout=dropout,
         ).to(self.device)
+        self.model = _compile_model(self.model)
 
         self.criterion = self._build_loss()
         self.optimizer = torch.optim.AdamW(
@@ -37,12 +59,15 @@ class ClassifierTrainer:
             lr=cfg.classifier.optimizer.lr,
             weight_decay=cfg.classifier.optimizer.weight_decay,
         )
-        self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        # Warmup + cosine annealing (uses warmup_epochs from config)
+        self.scheduler = WarmupCosineScheduler(
             self.optimizer,
-            T_max=cfg.classifier.epochs,
-            eta_min=cfg.classifier.scheduler.min_lr,
+            warmup_epochs=cfg.classifier.scheduler.warmup_epochs,
+            total_epochs=cfg.classifier.epochs,
+            min_lr=cfg.classifier.scheduler.min_lr,
         )
-        self.scaler = GradScaler()
+        # Use the new torch.amp namespace (torch.cuda.amp is deprecated in 2.x)
+        self.scaler = torch.amp.GradScaler("cuda", enabled=self.device.type == "cuda")
         self.metrics = ClassificationMetrics(cfg.wm811k.num_classes, cfg.wm811k.class_names)
 
         self.best_metric = 0.0
@@ -66,11 +91,11 @@ class ClassifierTrainer:
         self.model.train()
         total_loss = 0.0
 
-        for step, batch in enumerate(self.train_loader):
+        for batch in self.train_loader:
             images = batch["image"].to(self.device, non_blocking=True)
             labels = batch["label"].to(self.device, non_blocking=True)
 
-            with autocast():
+            with torch.amp.autocast("cuda", enabled=self.device.type == "cuda"):
                 logits = self.model(images)
                 loss = self.criterion(logits, labels)
 
@@ -91,19 +116,29 @@ class ClassifierTrainer:
         for batch in loader:
             images = batch["image"].to(self.device, non_blocking=True)
             labels = batch["label"].to(self.device, non_blocking=True)
-            logits = self.model(images)
+            with torch.amp.autocast("cuda", enabled=self.device.type == "cuda"):
+                logits = self.model(images)
             self.metrics.update(logits, labels)
 
         results = self.metrics.compute()
         log.info(f"{split}_metrics", **{k: f"{v:.4f}" for k, v in results.items()})
         return results
 
+    def _raw_state_dict(self) -> dict:
+        """Return state dict, unwrapping torch.compile if applied."""
+        m = self.model
+        if hasattr(m, "_orig_mod"):
+            m = m._orig_mod
+        return m.state_dict()
+
     def save_checkpoint(self, epoch: int, metric: float) -> None:
         state = {
             "epoch": epoch,
-            "model": self.model.state_dict(),
+            "model": self._raw_state_dict(),
             "optimizer": self.optimizer.state_dict(),
             "metric": metric,
+            "backbone": self.cfg.classifier.backbone,
+            "dropout": self.cfg.classifier.get("dropout", 0.3),
         }
         torch.save(state, self.artifact_dir / "classifier_last.pt")
         if metric > self.best_metric:
@@ -121,8 +156,13 @@ class ClassifierTrainer:
             metric = val_metrics["f1_macro"]
             self.save_checkpoint(epoch, metric)
 
-            log.info("epoch_complete", epoch=epoch, train_loss=f"{train_loss:.4f}",
-                     f1_macro=f"{metric:.4f}", lr=f"{self.scheduler.get_last_lr()[0]:.2e}")
+            log.info(
+                "epoch_complete",
+                epoch=epoch,
+                train_loss=f"{train_loss:.4f}",
+                f1_macro=f"{metric:.4f}",
+                lr=f"{self.scheduler.get_last_lr()[0]:.2e}",
+            )
 
             if metric <= self.best_metric:
                 self.patience_counter += 1
@@ -132,7 +172,6 @@ class ClassifierTrainer:
             else:
                 self.patience_counter = 0
 
-        # final test evaluation
         test_metrics = self.evaluate(self.test_loader, "test")
         log.info("training_complete", best_f1=f"{self.best_metric:.4f}", test_metrics=test_metrics)
 

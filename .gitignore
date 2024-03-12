@@ -21,9 +21,9 @@ htmlcov/
 .vscode/
 .idea/
 
-# Data & artifacts
-data/
-artifacts/
+# Data & artifacts (root-level only — src/data/ Python module is tracked)
+/data/
+/artifacts/
 *.pt
 *.onnx
 *.pkl

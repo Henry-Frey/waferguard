@@ -1,4 +1,4 @@
-.PHONY: setup download-data train-classifier train-anomaly eval-classifier eval-anomaly serve test lint clean
+.PHONY: setup download-data train-classifier train-anomaly eval-classifier eval-anomaly hpo eval-ensemble serve test lint clean
 
 setup:
 	python -m venv .venv
@@ -15,6 +15,16 @@ train-anomaly:
 
 eval-classifier:
 	python -m src.training.train_classifier --eval-only
+
+# ── HPO & Ensemble ──────────────────────────────────────────────────────────
+# Bayesian hyperparameter search (Optuna TPE, 20 trials by default).
+# Saves per-trial checkpoints to artifacts/hpo/ and best_hparams.yaml.
+hpo:
+	python -m src.training.hpo
+
+# Evaluate the top-K ensemble from HPO on the test split.
+eval-ensemble:
+	python -m src.models.ensemble
 
 serve:
 	uvicorn src.serving.app:app --host 0.0.0.0 --port 8000 --reload
