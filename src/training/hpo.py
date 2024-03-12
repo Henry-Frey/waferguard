@@ -107,7 +107,8 @@ def _run_trial(
         dropout=params["dropout"],
     ).to(device)
 
-    if device.type == "cuda" and hasattr(torch, "compile"):
+    import sys
+    if sys.platform != "win32" and device.type == "cuda" and hasattr(torch, "compile"):
         try:
             model = torch.compile(model)
         except Exception:

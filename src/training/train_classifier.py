@@ -26,7 +26,16 @@ torch.backends.cudnn.allow_tf32 = True
 
 
 def _compile_model(model: torch.nn.Module) -> torch.nn.Module:
-    """Wrap model with torch.compile if available (PyTorch ≥ 2.0 + CUDA)."""
+    """Wrap model with torch.compile if supported (PyTorch ≥ 2.0, CUDA, non-Windows).
+
+    torch.compile's default inductor backend requires Triton, which is Linux-only.
+    On Windows we skip compilation and run in eager mode — all other GPU optimisations
+    (cudnn.benchmark, TF32, AMP) still apply.
+    """
+    import sys
+    if sys.platform == "win32":
+        log.info("torch_compile_skipped", reason="Triton not available on Windows")
+        return model
     if torch.cuda.is_available() and hasattr(torch, "compile"):
         try:
             model = torch.compile(model)
