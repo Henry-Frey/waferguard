@@ -10,7 +10,7 @@ hpo:
   # ── Study settings ──────────────────────────────────────────────────────────
   study_name: waferguard_hpo
   n_trials: 20              # Total Optuna trials to run
-  trial_epochs: 15          # Epochs per trial (< full 50 to save time)
+  trial_epochs: 30          # Epochs per trial (< full 100 to save time)
 
   # ── TPE / Pruning ────────────────────────────────────────────────────────────
   n_startup_trials: 5       # Random exploration before TPE posterior is used

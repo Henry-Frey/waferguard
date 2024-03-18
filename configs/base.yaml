@@ -32,10 +32,10 @@ wm811k:
   balance_strategy: oversample  # oversample | undersample | focal_loss
 
 classifier:
-  backbone: resnet34
+  backbone: resnet50
   pretrained: true
-  batch_size: 256   # 3090 24GB: ResNet34 @ 96x96 fits ~512; 256 is safe with room
-  epochs: 50
+  batch_size: 256   # 3090 24GB: ResNet50 @ 96x96 still fits 256 comfortably
+  epochs: 100
   optimizer:
     name: adamw
     lr: 3.0e-4
