@@ -171,6 +171,25 @@ class WaferEnsemble:
         return cls(selected, cfg, device)
 
     @classmethod
+    def from_ensemble_dir(
+        cls,
+        ensemble_dir: str | Path,
+        cfg: DictConfig,
+        device: torch.device | None = None,
+    ) -> "WaferEnsemble":
+        """Load fully-trained member_XX.pt files from train_ensemble_members output.
+
+        These are the completed models produced after resuming HPO survivors
+        to their full training budget — use these for the final ensemble.
+        """
+        ensemble_dir = Path(ensemble_dir)
+        member_files = sorted(ensemble_dir.glob("member_*.pt"))
+        if not member_files:
+            raise FileNotFoundError(f"No member checkpoints found in {ensemble_dir}")
+        log.info("ensemble_from_dir", n_members=len(member_files), dir=str(ensemble_dir))
+        return cls(member_files, cfg, device)
+
+    @classmethod
     def from_best_checkpoint(
         cls, artifact_dir: str | Path, cfg: DictConfig, device: torch.device | None = None
     ) -> "WaferEnsemble":
@@ -182,18 +201,31 @@ class WaferEnsemble:
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def _evaluate_ensemble(cfg: DictConfig) -> None:
-    """Evaluate the HPO ensemble on the test split and print metrics."""
+    """Evaluate the fully-trained ensemble on the test split and print metrics.
+
+    Prefers artifacts/ensemble/member_XX.pt (completed models from
+    train_ensemble_members).  Falls back to raw HPO trial checkpoints if the
+    ensemble dir does not exist yet.
+    """
     from src.data.loader import build_classifier_loaders
     from src.evaluation.metrics import ClassificationMetrics
     from src.utils.logging import setup_logging
 
     setup_logging()
 
-    artifact_dir = Path(cfg.hpo.artifact_dir)
-    top_k: int = cfg.hpo.get("ensemble_top_k", 3)
+    ensemble_dir = Path(cfg.hpo.get("ensemble_dir", "artifacts/ensemble"))
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    ensemble = WaferEnsemble.from_hpo_artifacts(artifact_dir, top_k, cfg, device)
+    if ensemble_dir.exists() and any(ensemble_dir.glob("member_*.pt")):
+        log.info("loading_completed_members", dir=str(ensemble_dir))
+        ensemble = WaferEnsemble.from_ensemble_dir(ensemble_dir, cfg, device)
+    else:
+        # Fall back to raw HPO checkpoints (partial training — lower quality)
+        log.info("ensemble_dir_empty_falling_back_to_hpo_checkpoints")
+        top_k: int = cfg.hpo.get("ensemble_top_k", 3)
+        ensemble = WaferEnsemble.from_hpo_artifacts(
+            Path(cfg.hpo.artifact_dir), top_k, cfg, device
+        )
 
     _, _, test_loader = build_classifier_loaders(cfg)
     metrics_tracker = ClassificationMetrics(cfg.wm811k.num_classes, cfg.wm811k.class_names)

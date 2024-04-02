@@ -17,5 +17,6 @@ hpo:
   n_warmup_steps: 3         # Min epochs before MedianPruner can fire in a trial
 
   # ── Output ───────────────────────────────────────────────────────────────────
-  artifact_dir: artifacts/hpo   # Directory for per-trial checkpoints + best_hparams.yaml
-  ensemble_top_k: 3             # Number of top trials to use when building ensemble
+  artifact_dir: artifacts/hpo       # Per-trial checkpoints + best_hparams.yaml
+  ensemble_dir: artifacts/ensemble  # Fully-trained members from train_ensemble_members
+  ensemble_top_k: 3                 # Number of top trials to resume and use in ensemble

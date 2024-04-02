@@ -17,12 +17,17 @@ eval-classifier:
 	python -m src.training.train_classifier --eval-only
 
 # ── HPO & Ensemble ──────────────────────────────────────────────────────────
-# Bayesian hyperparameter search (Optuna TPE, 20 trials by default).
-# Saves per-trial checkpoints to artifacts/hpo/ and best_hparams.yaml.
+# Phase 1: Bayesian hyperparameter search (Optuna TPE).
+# Saves partial trial checkpoints to artifacts/hpo/.
 hpo:
 	python -m src.training.hpo
 
-# Evaluate the top-K ensemble from HPO on the test split.
+# Phase 2: Resume top-K HPO survivors to full training (100 epochs + early stopping).
+# Saves completed models to artifacts/ensemble/.  Run this after `hpo`.
+train-ensemble-members:
+	python -m src.training.train_ensemble_members
+
+# Evaluate the fully-trained ensemble on the test split.
 eval-ensemble:
 	python -m src.models.ensemble
 
