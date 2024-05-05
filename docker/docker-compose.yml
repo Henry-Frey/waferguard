@@ -1,6 +1,16 @@
 version: "3.9"
 
+networks:
+  waferguard:
+    driver: bridge
+
+volumes:
+  esdata:
+    driver: local
+
 services:
+
+  # ── Application ────────────────────────────────────────────────────────────
   api:
     build:
       context: ..
@@ -9,17 +19,115 @@ services:
       - "8000:8000"
     volumes:
       - ../artifacts:/app/artifacts
+      - ../logs:/app/logs          # shared with Filebeat
     environment:
       - CUDA_VISIBLE_DEVICES=0
+      - LOG_FILE=/app/logs/waferguard.jsonl   # enables ELK JSON output
     deploy:
       resources:
         reservations:
           devices:
             - capabilities: [gpu]
+    networks:
+      - waferguard
+    depends_on:
+      - logstash
 
+  # ── Prometheus ─────────────────────────────────────────────────────────────
   prometheus:
     image: prom/prometheus:latest
     ports:
       - "9090:9090"
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    networks:
+      - waferguard
+
+  # ── Elasticsearch ──────────────────────────────────────────────────────────
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.13.0
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+    ports:
+      - "9200:9200"
+    volumes:
+      - esdata:/usr/share/elasticsearch/data
+      - ./elk/elasticsearch.yml:/usr/share/elasticsearch/config/elasticsearch.yml
+    networks:
+      - waferguard
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - |
+          curl -s http://localhost:9200/_cluster/health \
+            | grep -qE '"status":"(green|yellow)"'
+      interval: 20s
+      timeout: 10s
+      retries: 15
+
+  # ── Logstash ───────────────────────────────────────────────────────────────
+  logstash:
+    image: docker.elastic.co/logstash/logstash:8.13.0
+    ports:
+      - "5044:5044"
+    volumes:
+      - ./elk/logstash.yml:/usr/share/logstash/config/logstash.yml
+      - ./elk/logstash-pipeline.conf:/usr/share/logstash/pipeline/waferguard.conf
+    environment:
+      - LS_JAVA_OPTS=-Xms256m -Xmx256m
+    networks:
+      - waferguard
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+
+  # ── Kibana ─────────────────────────────────────────────────────────────────
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.13.0
+    ports:
+      - "5601:5601"
+    volumes:
+      - ./elk/kibana.yml:/usr/share/kibana/config/kibana.yml
+    networks:
+      - waferguard
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+
+  # ── Kibana setup (creates the data-view on first boot) ─────────────────────
+  kibana-setup:
+    image: curlimages/curl:8
+    networks:
+      - waferguard
+    depends_on:
+      - kibana
+    restart: on-failure
+    command: >-
+      sh -c "
+        for i in $(seq 1 30); do
+          STATUS=$(curl -s -o /dev/null -w '%{http_code}' http://kibana:5601/api/status);
+          [ \"$$STATUS\" = \"200\" ] && break;
+          echo \"Waiting for Kibana... ($$i/30)\";
+          sleep 10;
+        done;
+        curl -s -X POST http://kibana:5601/api/data_views/data_view
+          -H 'kbn-xsrf: true'
+          -H 'Content-Type: application/json'
+          -d '{\"data_view\":{\"title\":\"waferguard-*\",\"timeFieldName\":\"@timestamp\"}}' &&
+        echo 'Kibana data view created.'
+      "
+
+  # ── Filebeat ───────────────────────────────────────────────────────────────
+  filebeat:
+    image: docker.elastic.co/beats/filebeat:8.13.0
+    user: root
+    volumes:
+      - ./elk/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+      - ../logs:/logs:ro             # reads the API's JSON log file
+    networks:
+      - waferguard
+    depends_on:
+      - logstash
+    command: filebeat -e --strict.perms=false

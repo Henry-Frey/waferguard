@@ -1,0 +1,7 @@
+server.host: "0.0.0.0"
+server.name: waferguard-kibana
+elasticsearch.hosts: ["http://elasticsearch:9200"]
+
+# Suppress telemetry prompts in the UI.
+telemetry.optIn: false
+telemetry.enabled: false

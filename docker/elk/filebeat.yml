@@ -1,0 +1,28 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Filebeat configuration for WaferGuard
+#
+# Reads structlog JSON logs written to the shared ./logs/ volume by the API
+# container (enabled via LOG_FILE=/app/logs/waferguard.jsonl in docker-compose).
+# ──────────────────────────────────────────────────────────────────────────────
+
+filebeat.inputs:
+  - type: log
+    enabled: true
+    paths:
+      - /logs/*.jsonl
+    # Each line is a complete JSON document from structlog's JSONRenderer.
+    json.keys_under_root: true
+    json.overwrite_keys: true
+    json.add_error_key: true
+    # Tag all events with the service name so Logstash can build the index name.
+    fields:
+      service: serving
+    fields_under_root: false
+    # Only ship new lines after Filebeat starts (don't replay historical logs).
+    ignore_older: 24h
+
+output.logstash:
+  hosts: ["logstash:5044"]
+
+logging.level: info
+logging.to_files: false

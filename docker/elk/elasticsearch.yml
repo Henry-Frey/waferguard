@@ -1,0 +1,9 @@
+cluster.name: waferguard
+node.name: waferguard-es01
+network.host: 0.0.0.0
+discovery.type: single-node
+
+# Disable security for development/lab use.
+# Re-enable and configure TLS + users for production deployments.
+xpack.security.enabled: false
+xpack.license.self_generated.type: basic
